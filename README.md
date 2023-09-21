@@ -18,5 +18,5 @@ To run the code of our approach please follow these steps:
 ```
 3- Activate the created environment.<br />
 4- Update the global variables in the code accordingly.<br />
-5- Run all the cells.<br />
+5- Run the Python script.<br />
 
