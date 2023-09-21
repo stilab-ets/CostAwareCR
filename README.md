@@ -3,12 +3,13 @@ This is the replication package for our paper "A Multi-Objective Effort-Aware Ap
 
 We provide the necessary data/scripts to replicate our study including: 
 
-1- Python scripts to train the ML models.<br />
-2- The results for the validation data.<br />
-3- Datasets for the studied projects.<br />
-4- R scripts for statistical analysis.<br />
-5- The Conda envirement.<br /> 
+1- [Python scripts to train the ML models](https://github.com/stilab-ets/CostAwareCR/blob/main/CostAwareCR_main.py). <br />
+2- [The results for the validation data](https://github.com/stilab-ets/CostAwareCR/tree/main/results).<br />
+3- [Datasets for the studied projects](https://github.com/stilab-ets/CostAwareCR/tree/main/Datasets).<br />
+4- [R scripts for statistical analysis](https://github.com/stilab-ets/CostAwareCR/tree/main/R%20scripts).<br />
+5- [The Conda envirement](https://github.com/stilab-ets/CostAwareCR/blob/main/CostAwareCR_conda_env.yml).<br /> 
 
+# How to run CostAwareCR
 To run the code of our approach please follow these steps:
 
 1- Clone the the repo.<br />
