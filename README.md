@@ -12,7 +12,10 @@ We provide the necessary data/scripts to replicate our study including:
 To run the code of our approach please follow these steps:
 
 1- Clone the the repo.<br />
-2- Create the conda environment and install the code's dependencies using the following command: conda env create --name "envname" --file=CostAwareCR_conda_env.yml <br />
+2- Create the conda environment and install the code's dependencies using the following command:  <br />
+```properties
+ conda env create --name "envname" --file=CostAwareCR_conda_env.yml
+```
 3- Activate the created environment.<br />
 4- Update the global variables in the code accordingly.<br />
 5- Run all the cells.<br />
