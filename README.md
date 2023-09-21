@@ -8,3 +8,11 @@ We provide the necessary data/scripts to replicate our study including:
 3- Datasets for the studied projects.<br />
 4- R scripts for statistical analysis.<br />
 5- The Conda envirement.<br /> 
+
+To run the code of our approach please follow these steps: 
+1- Clone the the repo.
+2- Create the conda environment and install the code's dependencies using the following command: conda env create --name "envname" --file=CostAwareCR_conda_env.yml
+3- Activate the created environment 
+4- Update the global variables in the code accordingly 
+5- Run all the cells.
+
