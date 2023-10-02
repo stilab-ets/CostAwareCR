@@ -75,14 +75,15 @@ sys.path.append('../utils')
 from utils import * 
 
 
-#globals 
+#global variables 
+#Edit this to specify the data path, the considered project. 
+
 PROJECT = 'Eclipse'
 DATA_PATH = '../../data'
 RESULTS_PATH = f'../../results/{PROJECT}'
 CROSS_VALIDATION_DATA_PATH = '../../data/longitudinal_cross_validation'
 EXP_ID = 'default'
 OUTCOME = 'status'
-ALGORITHM = 'NSGA2'
 COST_FUNCTION ='churn_cost_predictions'
 FEATURES = ['author_experience','author_merge_ratio', 'author_changes_per_week',
        'author_merge_ratio_in_project', 'total_change_num',
@@ -108,13 +109,11 @@ NUMERICAL_FEATURES = [
 ]
 #cross_validation_setup
 FOLDS = 10 
-MOGA_ALGOS = ['NSGA2']
-ORGS = ['Libreoffice']
 
 
 
 
-#helpers 
+#helper functions
 def GET_DATA(): 
     return pd.read_csv(os.path.join(DATA_PATH,PROJECT + '.csv'))
 
@@ -124,6 +123,7 @@ def set_global_vars(org) :
     RESULTS_PATH = RESULTS_PATH = f'../../results/{PROJECT}'
 
 def evaluate_predictions(predictions,trues,costs,k=0.2) :
+       
     density = trues*1.0/costs 
     accs = []
     popts = []
@@ -144,19 +144,7 @@ def softmax(x):
 
 def normalize(x) : 
     return x/np.sum(x)
-    
-def add_log_features(data,columns): 
-    result = data.copy()
-    for col in columns : 
-        result['log1p_'+col] = np.log1p(result[col])
-    return result 
-
-def apply_log_transformation(data,columns):
-    result = data.copy()
-    for col in columns : 
-        result[col] = np.log1p(result[col])
-    return result 
-
+     
 def get_LOC_cost(df) :
     return np.array(df['lines_added'] + df['lines_deleted'])
 
@@ -167,6 +155,199 @@ def get_sota_model():
     return LGBMClassifier(class_weight='balanced', n_estimators=best_n_estimators, learning_rate=best_learning_rate,
                           subsample=0.9, subsample_freq=1, random_state=np.random.randint(seed))
 
+
+def prepare_data(df) : 
+    total_df = df.copy()
+    total_df = total_df.sort_values(by=['change_id'])
+    total_df = total_df[(total_df['lines_added'] + total_df['lines_deleted'] > 0) ]
+    total_df[OUTCOME] =  total_df[OUTCOME].astype(int)
+    _, metadata = preprocess(total_df,preprocessing_metadata = {
+        'scaling' : {
+            'scaler' : StandardScaler(),
+            'features' : NUMERICAL_FEATURES
+        }
+    })
+    return total_df, metadata
+
+def get_worst_optimal_area(data):
+    """
+    :param data: density_effort_defect_predictDensity
+    :return: worst area, optimal area
+    """
+    total_effort = np.sum(data[:, 1])
+    total_defect = np.sum(data[:, 2])
+    # calculate actual worst area
+    data = data[data[:, 0].argsort()]
+
+    point_x = []
+    point_y = []
+    x_current = 0
+    y_current = 0
+    point_x.append(x_current)
+    point_y.append(y_current)
+    for i in range(data.shape[0]):
+        x_current = x_current + data[i, 1]
+        y_current = y_current + data[i, 2]
+        point_x.append(x_current)
+        point_y.append(y_current)
+    point_x = np.array(point_x)
+    point_y = np.array(point_y)
+    point_x = point_x / total_effort
+    point_y = point_y / total_defect
+    worst_area = np.trapz(point_y, point_x)
+    ######
+    #plt.plot(point_x, point_y, color="black", linewidth=2.5, linestyle="-", label="worst model")
+
+    # calculate actual optimal area
+    point_x = []
+    point_y = []
+    x_current = 0
+    y_current = 0
+    point_x.append(x_current)
+    point_y.append(y_current)
+    i = data.shape[0] - 1
+    while i >= 0:
+        x_current = x_current + data[i, 1]
+        y_current = y_current + data[i, 2]
+        point_x.append(x_current)
+        point_y.append(y_current)
+        i = i - 1
+    point_x = np.array(point_x)
+    point_y = np.array(point_y)
+    point_x = point_x / total_effort
+    point_y = point_y / total_defect
+    optimal_area = np.trapz(point_y, point_x)
+
+    ####
+    #plt.plot(point_x, point_y, color="red", linewidth=2.5, linestyle="-", label="optimal model")
+
+    return worst_area, optimal_area
+
+def acc_popt(data,k = 0.2):
+    """
+    this function is used to compute the ACC and Popt scores 
+    :param data: density_effort_defect_predictDensity
+    :return: ACC, Popt
+    """
+    worst_area, optimal_area = get_worst_optimal_area(data)
+    total_effort = np.sum(data[:, 1])
+    total_defect = np.sum(data[:, 2])
+    # calculate predicted area
+    acc_mark = False
+    acc = 0
+    threshold = k*total_effort
+    data = data[data[:, 3].argsort()]
+    point_x = []
+    point_y = []
+    x_current = 0
+    y_current = 0
+    point_x.append(x_current)
+    point_y.append(y_current)
+    i = data.shape[0] - 1
+    while i >= 0:
+        if (acc_mark is False and x_current > threshold) :
+            acc = y_current/total_defect
+            acc_mark = True
+        x_current = x_current + data[i, 1]
+        y_current = y_current + data[i, 2]
+        point_x.append(x_current)
+        point_y.append(y_current)
+        i = i - 1
+    point_x = np.array(point_x)
+    point_y = np.array(point_y)
+    point_x = point_x / total_effort
+    point_y = point_y / total_defect
+    predicted_area = np.trapz(point_y, point_x)
+    popt = 1 - (optimal_area - predicted_area)/(optimal_area - worst_area)
+
+    #plt.xlabel("code churn (%)", size='14')  
+    #plt.ylabel("defect-inducing changes (%)", size='14')  #
+
+
+    #plt.plot(point_x, point_y, color="blue", linewidth=2.5, linestyle="-", label="prediction model")
+    #plt.legend(loc='upper left')
+    #plt.show()
+
+    return acc, popt
+
+def define_algorithm(algorithm_name,pop_size=400,n_objeectives = 2,
+                    crossover_op = SBX( prob=0.5, eta=15),
+                    mutation_op = PolynomialMutation(eta=20,prob = 0.1),
+                    ref_points = np.array([[0,0]])
+                    ): 
+    
+    if algorithm_name == 'AGEMOEA' : 
+        print('running: AGEMOEA')
+        algorithm = AGEMOEA(
+            pop_size=pop_size,
+            sampling=FloatRandomSampling(),
+            crossover=crossover_op,
+            mutation=mutation_op,
+        )
+    if algorithm_name == 'NSGA2':
+        print('running: NSGA2')
+        algorithm = NSGA2(
+            pop_size=pop_size,
+            sampling=FloatRandomSampling(),
+            crossover=crossover_op,
+            mutation=mutation_op,
+        )
+    
+    if algorithm_name == 'RNSGA2' : 
+        print('running: RNSGA2')
+        ref_points = ref_points
+        print(ref_points)
+        algorithm = RNSGA2(
+            pop_size=pop_size,
+            ref_points= ref_points,
+            sampling=FloatRandomSampling(),
+            crossover=crossover_op,
+            mutation=mutation_op,
+        )
+    if algorithm_name == 'RNSGA3' : 
+        print('running: RNSGA3')
+        print(pop_size)
+        ref_points = ref_points
+        print(ref_points)
+        algorithm = RNSGA3(
+            #pop_size=pop_size,
+            ref_points= ref_points,
+            pop_per_ref_point=pop_size,
+            sampling=FloatRandomSampling(),
+            crossover=crossover_op,
+            mutation=mutation_op,
+        )
+   
+    if algorithm_name == 'NSGA3' : 
+        print('Running NSGA3')
+        ref_dirs = get_reference_directions("energy", n_objeectives, pop_size)
+        algorithm = NSGA3(
+            pop_size=pop_size,
+            sampling=FloatRandomSampling(),
+            crossover=crossover_op,
+            mutation=mutation_op,
+            ref_dirs = ref_dirs
+        )
+    
+    if algorithm_name == 'UNSGA3' : 
+        print('Running NSGA3')
+        ref_dirs = get_reference_directions("energy", n_objeectives, pop_size)
+        algorithm = UNSGA3(
+            pop_size=pop_size,
+            sampling=FloatRandomSampling(),
+            crossover=crossover_op,
+            mutation=mutation_op,
+            ref_dirs = ref_dirs
+        )
+    if algorithm_name == 'GA' : 
+        algorithm = GA(
+            pop_size=pop_size,
+            sampling=FloatRandomSampling(),
+            crossover=crossover_op,
+            mutation=mutation_op,
+            eliminate_duplicates=True)
+    return algorithm
+                           
 def get_sota_model_EA():
     best_n_estimators = 500
     best_learning_rate = 0.01
@@ -268,120 +449,13 @@ def make_plot(title,sota_values,moea_values):
     plot.add(sota_values, color="red")
     plot.add(moea_values,color = "blue")
     return plot
-
-
-
-
-
-class learnRFWeigts(ElementwiseProblem) : 
-
-    def __init__(self,train_data_features,y_true,costs,
-                 objectives = ['recall','churn_cost_predictions'],
-                 rf_models = RandomForestClassifier(n_estimators=100,class_weight="balanced"),
-                 lb = -10, ub=10,prediction_threshold = 0.5 ):
-        self.train_data_features_df = train_data_features
-        self.rf_model = copy.deepcopy(rf_models)
-        self.y_true = y_true
-        self.costs = costs
-        print('fitting model')
-        self.rf_model.fit(self.train_data_features_df, self.y_true)
-        print('model is fit')
-        nb_variables = len(self.rf_model.estimators_)
-        xl = np.array([lb]*nb_variables)
-        xu = np.array([ub]*nb_variables)
-        self.prediction_threshold = prediction_threshold
-        self.objectives = objectives
-        super().__init__(n_var=nb_variables, n_obj=len(objectives), n_constr=0, xl=xl, xu=xu)
-
-
-    def _evaluate(self, x, out, *args, **kwargs): 
-        estimators_predictions = []
-        x_softmax = softmax(x)
-        probabilities = self.compute_probabilities(self.train_data_features_df.to_numpy(),x)
-        predictions = probabilities > self.prediction_threshold 
-        predictions = predictions.astype(int)
-
-        out["F"] = []
-        for objective in self.objectives: 
-            if objective == "recall": 
-                out["F"].append(1 - self.recall(predictions))
-            
-            if objective == "churn_cost_predictions":
-                out["F"].append(self.churn_cost_predictions(predictions))
-            
-            if objective == "normalized_churn_cost_predictions":
-                out["F"].append(self.churn_cost_predictions(predictions,normalized=True))
-                
-            if objective == "churn_cost_probabilities":
-                out["F"].append(self.churn_cost_probabilities(probabilities))
-                
-            if objective == "benefit":
-                out["F"].append(sum(self.y_true)-self.benefit(predictions)) 
-            
-            if objective == "AUC":
-                out["F"].append(1 - self.AUC(probabilities)) 
-            
-            if objective == "MCC":
-                out["F"].append(1 - self.MCC(predictions)) 
-            
-            if objective == "F1":
-                out["F"].append(1 - self.F1(predictions)) 
-            
-            if objective == "Gmean":
-                out["F"].append(1 - self.Gmean(predictions)) 
-            
-            if objective == "misclassification_cost": 
-                out["F"].append(self.misclassification_cost(predictions)) 
-            
-            if objective == 'popt' : 
-                acc,popt = evaluate_predictions(np.array([probabilities]).T,self.y_true,self.costs,k=0.2) 
-                out['F'].append(1-popt[0])
-
-            if objective == 'average_churn_recall' : 
-                val = 0.5*(1-self.recall(predictions)) + 0.5*self.churn_cost_predictions(predictions,normalized=True)
-                out['F'].append(val)
-    
-    def compute_probabilities(self,X,weights): 
-        #a helper function for probabilities
-        estimators_probabilities = []
-        normalized_weights = softmax(weights)
-        for estimator in self.rf_model.estimators_ : 
-            estimator_predictions_probabilities = estimator.predict_proba(X)[:,1]
-            estimators_probabilities.append(estimator_predictions_probabilities.reshape(-1,1))
-        estimators_probabilities = np.concatenate(estimators_probabilities,axis=1)
-        weighted_estimators_probabilities = np.dot(estimators_probabilities,weights.T)
-        return weighted_estimators_probabilities
-
-    def recall(self,predictions): 
-        return recall_score(self.y_true,predictions)
-    
-    def churn_cost_predictions(self,predictions,normalized = False): 
-        return cost_predictions(self.costs,predictions,normalized)
-    
-    def churn_cost_probabilities(self,probabilities): 
-        return np.sum(probabilities*self.costs)
-    
-    def benefit(self,predictions): 
-        return np.sum(predictions*self.y_true)
-    
-    def AUC(self,probabilities): 
-        return roc_auc_score(self.y_true, probabilities)
-    
-    def MCC(self,predictions): 
-        return matthews_corrcoef(self.y_true, predictions)
-    
-    def F1(self,predictions): 
-        return f1_score(self.y_true, predictions)
-    
-    def Gmean(self,prediction): 
-        return geometric_mean_score(self.y_true, prediction)
-    
-    def misclassification_cost(self,predictions,alpha = 10): 
-        tn, fp, fn, tp = confusion_matrix(self.y_true, predictions).ravel()
-        return (fp + alpha*fn)/len(predictions)  
-    
     
 class LearnLrWeights(Problem): 
+       """
+       This class defines the optimization problem that learns the weights of a logistic regression.
+       The class inherits from the Abstract problem class from Pymoo. 
+       """
+
     def __init__(self,train_data_features,y_true,costs,
                  objectives = ['recall','churn_cost_predictions'],
                  lb = -1000,ub=1000,prediction_threshold = 0.5,**kwargs): 
@@ -400,14 +474,24 @@ class LearnLrWeights(Problem):
         super().__init__(n_var=nb_variables, n_obj=len(objectives), n_constr=0, xl=xl, xu=xu)
         
     def _evaluate(self, x, out, *args, **kwargs):
+       """
+       This method is inherited from the Problem class and should be implemented. 
+       this method is parallelized. 
+       """
         pool  = ThreadPool(18)
         F = pool.map(self.evaluate_one_sol, x)
         out['F'] = np.array(F)
     def evaluate_one_sol(self,x):
+       """
+       This function is used to evaluate a given solution. 
+       Given the weights (x), the function computes the prediction of an LR model.
+       Then, evaluate the performance of the LR model based on the objective functions.
+       """
         out = []
         weighted_sum = np.dot(self.train_data_features_np,x)
         exp_weighted_sum = np.exp(-1*weighted_sum)
         probabilities = 1.0/(1.0 + exp_weighted_sum)
+        #compute the prediction of the LR model
         predictions = probabilities > self.prediction_threshold 
         predictions = predictions.astype(int)
         for objective in self.objectives: 
@@ -467,7 +551,7 @@ class LearnLrWeights(Problem):
                 out.append(val)
         return out 
 
-
+    #the following functions are helper functions for 
     def recall(self,predictions): 
         return recall_score(self.y_true,predictions)
     
@@ -497,309 +581,7 @@ class LearnLrWeights(Problem):
         return (fp + alpha*fn)/len(predictions)  
     def TNR(self, predictions): 
         return recall_score(self.y_true,predictions,pos_label=0)
-def prepare_data(df) : 
-    total_df = df.copy()
-    total_df = total_df.sort_values(by=['change_id'])
-    total_df = total_df[(total_df['lines_added'] + total_df['lines_deleted'] > 0) ]
-    total_df[OUTCOME] =  total_df[OUTCOME].astype(int)
-    _, metadata = preprocess(total_df,preprocessing_metadata = {
-        'scaling' : {
-            'scaler' : StandardScaler(),
-            'features' : NUMERICAL_FEATURES
-        }
-    })
-    return total_df, metadata
-
-def make_validation_set(X,y,costs,validation_size = 0.1,stratify_on_costs=False) :
-    labels = y 
-    if stratify_on_costs : 
-        labels = np.array([y,costs]).T
-    
-    train_idx, test_idx = StratifiedShuffleSplit(test_size = 0.1,n_splits=1).split(X,labels).__next__()
-    return train_idx, test_idx
-
-def recall_at_k(sortval, loc, indpval,k=0.2):
-    """
-    :param sortval: sort key (e.g., the prediction value)
-    :param loc: x-axis (e.g., LOC_TOTAL, effort)
-    :param indpval: y-axis (e.g., bug density)
-    :return: acc score
-    """
-    
-    sortval = np.ravel(sortval)
-    loc = np.ravel(loc)
-    indpval = np.ravel(indpval)
-    
-    bug_n = np.sum(indpval)
-    if bug_n == 0:
-        return 1
-    pel = np.stack([sortval, loc, indpval], axis=0)
-   
-    pel = pel[:, np.argsort(pel[1, :])]
-    
-    pel = pel[:, np.argsort(-pel[0, :], kind='mergesort')]
-    
-    pel = pel[:, pel[1, :].cumsum() <= k * np.sum(loc)]
-    
-    return np.sum(pel[2, :])/bug_n
-
-
-def calcAUC(cumLOC, cumIndp, norm=True):
-    """
-    :param cumLOC: x-axis
-    :param cumIndp: y-axis
-    :param norm: is normalized
-    :return: auc
-    """
-    mat = np.stack([cumLOC, cumIndp], axis=0)
-    tmp = mat[:, np.argsort(-mat[1, :])]
-    res = tmp[:, np.argsort(tmp[0, :], kind='mergesort')]
-    cumIndp = res[1, :]
-
-    # calc diff
-    diffLOC = np.diff(cumLOC)
-    diffIndp = np.diff(cumIndp)
-
-    # calc AUC of the plot
-    auc = (diffLOC * cumIndp[1:len(cumIndp)]) - (diffLOC * diffIndp / 2)
-
-    auc = np.sum(auc) + (cumLOC[0] * cumIndp[0] / 2)
-    if norm:
-        auc = auc / (cumLOC[-1] * cumIndp[-1])
-
-    return auc
-
-
-def P_opt(sortval, loc, indpval, dc=False):
-    """
-    P_opt = 1 - delta_opt
-    :param sortval: sort key (e.g., the prediction value)
-    :param loc: x-axis (e.g., LOC_TOTAL, effort)
-    :param indpval: y-axis (e.g., bug density)
-    :param dc: is decreasing
-    :return:
-    """
-    sortval = np.ravel(sortval)
-    loc = np.ravel(loc)
-    indpval = np.ravel(indpval)
-
-    sign = 1 if dc else -1
-    sortedId = np.argsort(sign * sortval)
-
-    # cumulative summing
-    cloc = loc[sortedId].cumsum()
-    cindp = indpval[sortedId].cumsum()
-
-    # calc optimal model
-    optId = np.argsort(-(indpval / loc))
-    optcloc = loc[optId].cumsum()
-    optcindp = indpval[optId].cumsum()
-
-    minId = np.argsort(indpval / loc)
-    mincloc = loc[minId].cumsum()
-    mincindp = indpval[minId].cumsum()
-
-    # calc AUC of the plot
-    auc = calcAUC(cloc, cindp)
-    optauc = calcAUC(optcloc, optcindp)
-    minauc = calcAUC(mincloc, mincindp)
-
-    return 1 - ((optauc - auc) / (optauc - minauc))
-
-#np.hstack((np.array([density]).T, np.array([test_cost]).T, np.array([y_test]).T, np.array([predict_y]).T))
-def get_worst_optimal_area(data):
-    """
-    :param data: density_effort_defect_predictDensity
-    :return: worst area, optimal area
-    """
-    total_effort = np.sum(data[:, 1])
-    total_defect = np.sum(data[:, 2])
-    # calculate actual worst area
-    data = data[data[:, 0].argsort()]
-
-    point_x = []
-    point_y = []
-    x_current = 0
-    y_current = 0
-    point_x.append(x_current)
-    point_y.append(y_current)
-    for i in range(data.shape[0]):
-        x_current = x_current + data[i, 1]
-        y_current = y_current + data[i, 2]
-        point_x.append(x_current)
-        point_y.append(y_current)
-    point_x = np.array(point_x)
-    point_y = np.array(point_y)
-    point_x = point_x / total_effort
-    point_y = point_y / total_defect
-    worst_area = np.trapz(point_y, point_x)
-    ######
-    #plt.plot(point_x, point_y, color="black", linewidth=2.5, linestyle="-", label="worst model")
-
-    # calculate actual optimal area
-    point_x = []
-    point_y = []
-    x_current = 0
-    y_current = 0
-    point_x.append(x_current)
-    point_y.append(y_current)
-    i = data.shape[0] - 1
-    while i >= 0:
-        x_current = x_current + data[i, 1]
-        y_current = y_current + data[i, 2]
-        point_x.append(x_current)
-        point_y.append(y_current)
-        i = i - 1
-    point_x = np.array(point_x)
-    point_y = np.array(point_y)
-    point_x = point_x / total_effort
-    point_y = point_y / total_defect
-    optimal_area = np.trapz(point_y, point_x)
-
-    ####
-    #plt.plot(point_x, point_y, color="red", linewidth=2.5, linestyle="-", label="optimal model")
-
-    return worst_area, optimal_area
-
-#np.hstack((np.array([density]).T, np.array([test_cost]).T, np.array([y_test]).T, np.array([predict_y]).T))
-def acc_popt(data,k = 0.2):
-    """
-    :param data: density_effort_defect_predictDensity
-    :return: ACC, Popt
-    """
-    worst_area, optimal_area = get_worst_optimal_area(data)
-    total_effort = np.sum(data[:, 1])
-    total_defect = np.sum(data[:, 2])
-    # calculate predicted area
-    acc_mark = False
-    acc = 0
-    threshold = k*total_effort
-    data = data[data[:, 3].argsort()]
-    point_x = []
-    point_y = []
-    x_current = 0
-    y_current = 0
-    point_x.append(x_current)
-    point_y.append(y_current)
-    i = data.shape[0] - 1
-    while i >= 0:
-        if (acc_mark is False and x_current > threshold) :
-            acc = y_current/total_defect
-            acc_mark = True
-        x_current = x_current + data[i, 1]
-        y_current = y_current + data[i, 2]
-        point_x.append(x_current)
-        point_y.append(y_current)
-        i = i - 1
-    point_x = np.array(point_x)
-    point_y = np.array(point_y)
-    point_x = point_x / total_effort
-    point_y = point_y / total_defect
-    predicted_area = np.trapz(point_y, point_x)
-    popt = 1 - (optimal_area - predicted_area)/(optimal_area - worst_area)
-
-    #plt.xlabel("code churn (%)", size='14')  
-    #plt.ylabel("defect-inducing changes (%)", size='14')  #
-
-
-    #plt.plot(point_x, point_y, color="blue", linewidth=2.5, linestyle="-", label="prediction model")
-    #plt.legend(loc='upper left')
-    #plt.show()
-
-    return acc, popt
-
-def calculate_FPA(data):
-    """
-    :param data: predictDensity_density
-    :return: FPA
-    """
-    data = data[data[:, 0].argsort()]
-    sum = 0
-    K = data.shape[0]
-    for i in range(K):
-        sum = sum + (i+1) * data[i, 1]
-    return sum
-
-
-
-
-def define_algorithm(algorithm_name,pop_size=400,n_objeectives = 2,
-                    crossover_op = SBX( prob=0.5, eta=15),
-                    mutation_op = PolynomialMutation(eta=20,prob = 0.1),
-                    ref_points = np.array([[0,0]])
-                    ): 
-    
-    if algorithm_name == 'AGEMOEA' : 
-        print('running: AGEMOEA')
-        algorithm = AGEMOEA(
-            pop_size=pop_size,
-            sampling=FloatRandomSampling(),
-            crossover=crossover_op,
-            mutation=mutation_op,
-        )
-    if algorithm_name == 'NSGA2':
-        print('running: NSGA2')
-        algorithm = NSGA2(
-            pop_size=pop_size,
-            sampling=FloatRandomSampling(),
-            crossover=crossover_op,
-            mutation=mutation_op,
-        )
-    
-    if algorithm_name == 'RNSGA2' : 
-        print('running: RNSGA2')
-        ref_points = ref_points
-        print(ref_points)
-        algorithm = RNSGA2(
-            pop_size=pop_size,
-            ref_points= ref_points,
-            sampling=FloatRandomSampling(),
-            crossover=crossover_op,
-            mutation=mutation_op,
-        )
-    if algorithm_name == 'RNSGA3' : 
-        print('running: RNSGA3')
-        print(pop_size)
-        ref_points = ref_points
-        print(ref_points)
-        algorithm = RNSGA3(
-            #pop_size=pop_size,
-            ref_points= ref_points,
-            pop_per_ref_point=pop_size,
-            sampling=FloatRandomSampling(),
-            crossover=crossover_op,
-            mutation=mutation_op,
-        )
-   
-    if algorithm_name == 'NSGA3' : 
-        print('Running NSGA3')
-        ref_dirs = get_reference_directions("energy", n_objeectives, pop_size)
-        algorithm = NSGA3(
-            pop_size=pop_size,
-            sampling=FloatRandomSampling(),
-            crossover=crossover_op,
-            mutation=mutation_op,
-            ref_dirs = ref_dirs
-        )
-    
-    if algorithm_name == 'UNSGA3' : 
-        print('Running NSGA3')
-        ref_dirs = get_reference_directions("energy", n_objeectives, pop_size)
-        algorithm = UNSGA3(
-            pop_size=pop_size,
-            sampling=FloatRandomSampling(),
-            crossover=crossover_op,
-            mutation=mutation_op,
-            ref_dirs = ref_dirs
-        )
-    if algorithm_name == 'GA' : 
-        algorithm = GA(
-            pop_size=pop_size,
-            sampling=FloatRandomSampling(),
-            crossover=crossover_op,
-            mutation=mutation_op,
-            eliminate_duplicates=True)
-    return algorithm
+           
 
 class MOGA_LR_warapper : 
     def __init__(
@@ -1041,14 +823,8 @@ class sklearn_model_warpper:
 def train_MOGA(data,outcome,costs,algorithm,n_gen = 200,
                 objectives = ['recall','churn_cost_predictions']): 
     
-   # n_proccess = 4
-   # pool = multiprocessing.Pool(n_proccess)
-    #runner = StarmapParallelization(pool.starmap)
-
-    # define the problem by passing the starmap interface of the thread pool
     problem = LearnLrWeights(data, outcome, costs,objectives = objectives)
     algorithm = copy.deepcopy(algorithm)
-    n_proccess = 8
     
 
     res = minimize(problem,
@@ -1058,26 +834,17 @@ def train_MOGA(data,outcome,costs,algorithm,n_gen = 200,
                    verbose=True)
     X, F = res.opt.get("X", "F")
     return X,F,res.problem
-
-def train_RF_MOGA(data,outcome,costs,algorithm,n_gen = 200,
-                objectives = ['recall','churn_cost_predictions']): 
-    
-    problem = learnRFWeigts(data, outcome, costs,objectives = objectives)
-    algorithm = copy.deepcopy(algorithm)
-    res = minimize(problem,
-                    algorithm,
-                   ('n_gen', n_gen),
-                   seed=1,
-                   verbose=True)
-    X, F = res.opt.get("X", "F")
-    return X,F,res.problem
-
-
 
 #main 
 def cross_validation(results_path,exp_id,dfs, models
                     ,features=FEATURES,outcome=OUTCOME,
-                    nb_folds=10,nb_repetitions=31,ks = [0.2]) : 
+                    nb_folds=10,nb_repetitions=31,
+                    ks = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]) : 
+    '''
+    This is the main function for cross-validation. It takes as input the data and the models to test.
+    It then performs online cross-validation for all the models with the specified repetition number.
+    The function saves the results in the results path. 
+    '''
     results_path = os.path.join(results_path,exp_id) 
     all_results=[]
     os.makedirs(results_path,exist_ok=True)
@@ -1118,50 +885,58 @@ def cross_validation(results_path,exp_id,dfs, models
                     print('fold:',fold)
                     fold_path = os.path.join(model_path,f'repetition{repetition}',f'fold{fold}')
                     os.makedirs(fold_path,exist_ok=True)
+                    #checking whether the model is already trained
+                    #if it is then no need to re-train
                     if os.path.isfile(os.path.join(fold_path,f'{model_name}.pkl')) : 
                         print('Already done')
                         continue
+                    #specifying the training and testing data folds 
                     train_size = df.shape[0] * fold // (nb_folds + 1)
                     test_size = min(df.shape[0] * (fold + 1) // (nb_folds + 1), df.shape[0])
                     df_train = df.iloc[:train_size - 1]
                     df_test = df.iloc[train_size:test_size - 1]
+                    #saving train and test data in the experiment metadata
                     df_train.to_csv(os.path.join(fold_path,'train.csv'),index=False)
                     df_test.to_csv(os.path.join(fold_path,'test.csv'),index=False)
-
+                    #preparing Xs and ys for training and testing 
                     x_train, y_train = df.loc[:train_size - 1, features], df.loc[:train_size - 1, outcome]
-                    x_test, y_test = df.loc[train_size:test_size - 1, features],                                             df.loc[train_size:test_size - 1, outcome]
-                    
-                    print('mean train:',np.mean(y_train))
-                    print('mean test:',np.mean(y_test))
+                    x_test, y_test = df.loc[train_size:test_size - 1, features], df.loc[train_size:test_size - 1, outcome]
+
+                    #computing training and testing costs. Will be used later for MOO
                     train_cost = get_LOC_cost(df.loc[:train_size - 1, features])
                     test_cost = get_LOC_cost(df.loc[train_size:test_size - 1, features])
                     train_indicies = None 
                     val_indicies = None 
                     if not (model_data['validation_selection'] is None) : 
-                        print(x_train.shape)
-                        print(y_train.shape)
-                        print(y_train)
                         train_indicies, val_indicies = model_data['validation_selection'](x_train,y_train,train_cost)
-                        
+
+                    #normalizing the data  
                     x_train_preprocessed,_ = preprocess(x_train,preprocessing_metadata=preprocessing_metadata)
-                    #if ("EA" in model_name): 
-                     #   x_train_preprocessed = x_train_preprocessed.drop(columns = ['lines_added', 'lines_deleted' ])
-                    #model_data['learner'].fit(x_train_preprocessed, y_train, train_cost, train_indicies=train_indicies, validation_indicies=val_indicies)
+                    if ("EALGBM" in model_name) or ("EALR" in model_name):
+                        x_train_preprocessed = x_train_preprocessed.drop(columns = ['lines_added', 'lines_deleted' ])
+
+                    #fitting the model
                     start = time.time()
                     model_data['learner'].fit(x_train_preprocessed, y_train, train_cost, train_indicies=train_indicies, validation_indicies=val_indicies)
                     fit_time = time.time() - start
-                    #print(model_data['learner'].objectives)
-                    #print(model_data['learner'].weights_objectives)
+
+                    #saving the fitted model 
                     pickle.dump(model_data['learner'], open(os.path.join(fold_path,f'{model_name}.pkl'), 'wb'))
+
+                    #preparing the X_test 
                     x_test_preprocessed,_ = preprocess(x_test,preprocessing_metadata=preprocessing_metadata)
-                    #if ("EA" in model_name): 
-                     #   x_test_preprocessed = x_test_preprocessed.drop(columns = ['lines_added', 'lines_deleted' ])
-                    #model_data['learner'].fit(x_train_preprocessed, y_train, train_cost, train_indicies=train_indicies, validation_indicies=val_indicies)
+                    if ("EALGBM" in model_name) or ("EALR" in model_name):
+                        x_test_preprocessed = x_test_preprocessed.drop(columns = ['lines_added', 'lines_deleted' ])
+
+                    #computing predictions and probabilities (i.e., merge likelihood) using the fitted model on the test data   
                     predictions = model_data['learner'].predict(x_test_preprocessed)
                     probabilities = model_data['learner'].predict_proba(x_test_preprocessed)
+                       
+                    #AUC and recall are not defined for EALGBM and EALR so we compute it for the other models   
                     if model_name != 'EALGBM' and model_name != 'EALR' :
                         test_recalls = [recall(y_test,predictions[:,i]) for i in range(predictions.shape[1]) ]
                         test_aucs = [roc_auc_score(y_test,probabilities[:,i]) for i in range(predictions.shape[1]) ]
+                     
                         new_row['best_recall'] = float(np.max(test_recalls))  
                         new_row['median_recall'] = float(np.median(test_recalls))
                         new_row['best_auc'] = float(np.max(test_aucs))  
@@ -1200,7 +975,7 @@ def cross_validation(results_path,exp_id,dfs, models
     all_results_df.to_csv(os.path.join(results_path,'all.csv'),index=False)
 
 def main(): 
-        #main 
+    #main 
     #setting algos 
     TWO_OBJECTIVE_ALGO = 'NSGA2'
     all_algos = {}
@@ -1247,7 +1022,7 @@ def main():
             'GA_algorithm':TWO_OBJECTIVE_ALGO,
             'population_size':800,
             'n_gen' : 2400,
-            'use_rulefit' : False,
+            'use_rulefit' : True,
             'crossover_op' :  SBX(prob=0.7, eta=15)
         })
         all_algos[model_name]['validation_selection'] = None #lambda X,y,costs: make_validation_set(X,y,costs,validation_size = None,stratify_on_costs=False)
@@ -1260,7 +1035,7 @@ def main():
         'mutation_op' : PolynomialMutation(eta=20,prob = 1/(len(FEATURES)) ),
         'GA_algorithm':'GA',
         'population_size':800,
-        'n_gen' : 1000,
+        'n_gen' : 2400,
         'crossover_op' :  SBX(prob=0.7, eta=15)
     })
 
