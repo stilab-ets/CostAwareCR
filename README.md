@@ -21,3 +21,19 @@ To run the code of our approach please follow these steps:
 4- Update the global variables in the code accordingly.<br />
 5- Run the Python script.<br />
 
+
+# How to cite?
+
+Please, use the following bibtex entry:
+```tex
+@article{chouchen2024multi,
+  title={A multi-objective effort-aware approach for early code review prediction and prioritization},
+  author={Chouchen, Moataz and Ouni, Ali},
+  journal={Empirical Software Engineering},
+  volume={29},
+  number={1},
+  pages={29},
+  year={2024},
+  publisher={Springer}
+}
+```
